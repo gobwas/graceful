@@ -3,7 +3,6 @@ package graceful
 import (
 	"encoding/gob"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"runtime"
@@ -14,12 +13,6 @@ import (
 const (
 	oobBufferSize = 4096
 	msgBufferSize = 4096
-)
-
-// Errors used by the Server or server utils.
-var (
-	ErrEmptyControlMessage  = fmt.Errorf("empty control message")
-	ErrEmptyFileDescriptors = fmt.Errorf("empty file descriptors")
 )
 
 // Meta contains name of a corresponding file descriptor and a custom meta

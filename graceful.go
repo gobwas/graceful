@@ -4,7 +4,7 @@ applications.
 
 It is intended to make graceful restarts of Go applications easier.
 
-The very common example:
+The very common example is:
 
 	ln, err := net.Listen("tcp", "localhost:")
 	if err != nil {
@@ -13,6 +13,7 @@ The very common example:
 
 	... // Work until must restart.
 
+	// Open a server that shares given listener with each accepted connection.
 	graceful.ListenAndServe(
 		"/var/my_app/graceful.sock",
 		graceful.ListenerHandler(ln),

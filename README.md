@@ -1,4 +1,4 @@
-# Graceful 💎.
+# Graceful 💎
 
 [![GoDoc][godoc-image]][godoc-url]
 [![Travis][travis-image]][travis-url]
@@ -7,10 +7,10 @@
 
 # Overview
 
-Package graceful provides tools for passing file descriptors between the
-applications.
+Package graceful provides tools for sharing file descriptors between the
+processes.
 
-The most common intent to use it is to get graceful restart of an application.
+The most common intent to use it is to get graceful restarts of an application.
 
 # Usage
 
@@ -19,7 +19,7 @@ application that owns a descriptors is a **server** in `graceful` terminology,
 and an application that wants to receive those descriptors is a **client**.
 
 Here is a sketch of [example web application](example) that handles restart
-gracefully. This example app does not use `SIGTERM` termination just to show up
+gracefully. This example app does not handle `SIGTERM` signal just to show up
 how `graceful` could be used in a most simple way. It interprets request for a
 listener descriptor as a termination signal.
 
@@ -67,7 +67,7 @@ func main() {
 	}
 
 	// Wrap listener such that all accepted connections are registered inside
-	// innter sync.WaitGroup. We will Wait() for them after new application
+	// inner sync.WaitGroup. We will Wait() for them after new application
 	// instance appear.
 	//
 	// Note that in some cases such simple solution can not fit performance needs.
@@ -86,8 +86,10 @@ func main() {
 	}
 	gln := l.(*net.UnixListener)
 
-	// Create exit channel which closure means that application can exit.
-	exit := make(chan struct{})
+	// restart is a channel which closure means that new instance of
+	// application has been started.
+	restart := make(chan struct{})
+
 	go graceful.Serve(gln, graceful.SequenceHandler(
 		// This "handler" will close graceful socket. This will help us to
 		// avoid races on next socket creation.
@@ -101,9 +103,9 @@ func main() {
 			Name: "http",
 		}),
 
-		// This "handler" closes exit channel, signaling that we can exit.
+		// This "handler" close the restart channel, signaling that we can exit.
 		graceful.CallbackHandler(func() {
-			close(exit)
+			close(restart)
 		}),
 	))
 
@@ -111,9 +113,9 @@ func main() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT)
 
-	// Lock on exit until the new app comes.
+	// Lock on restart until the new app comes.
 	select {
-	case <-exit:
+	case <-restart:
 		// Wait all accepted connection to be processed before exit.
 		lw.Wait()
 	case <-sig:
@@ -132,7 +134,7 @@ refactoring.
 
 
 [sigterm]:      https://www.gnu.org/software/libc/manual/html_node/Termination-Signals.html
-[example]:      https://github.com/gobwas/graceful
+[example]:      https://github.com/gobwas/graceful/tree/master/example
 [godoc-image]:  https://godoc.org/github.com/gobwas/graceful?status.svg
 [godoc-url]:    https://godoc.org/github.com/gobwas/graceful
 [travis-image]: https://travis-ci.org/gobwas/graceful.svg?branch=master

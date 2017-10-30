@@ -3,10 +3,17 @@ package graceful
 import (
 	"bytes"
 	"encoding/gob"
+	"fmt"
 	"io"
 	"net"
 	"os"
 	"syscall"
+)
+
+// Errors used by Receive() function.
+var (
+	ErrEmptyControlMessage  = fmt.Errorf("empty control message")
+	ErrEmptyFileDescriptors = fmt.Errorf("empty file descriptors")
 )
 
 // Receive dials to the "unix" network address addr and receives all

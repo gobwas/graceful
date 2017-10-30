@@ -75,8 +75,10 @@ func main() {
 	}
 	gln := l.(*net.UnixListener)
 
-	// Create exit channel which closure means that application can exit.
-	exit := make(chan struct{})
+	// restart is a channel which closure means that new instance of
+	// application has been started.
+	restart := make(chan struct{})
+
 	go graceful.Serve(gln, graceful.SequenceHandler(
 		// This "handler" will close graceful socket. This will help us to
 		// avoid races on next socket creation.
@@ -90,9 +92,9 @@ func main() {
 			Name: "http",
 		}),
 
-		// This "handler" closes exit channel, signaling that we can exit.
+		// This "handler" closes restart channel, signaling that we can exit.
 		graceful.CallbackHandler(func() {
-			close(exit)
+			close(restart)
 		}),
 	))
 
@@ -100,9 +102,9 @@ func main() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT)
 
-	// Lock on exit until the new app comes.
+	// Lock on restart until the new app comes.
 	select {
-	case <-exit:
+	case <-restart:
 		// Wait all accepted connection to be processed before exit.
 		log.Printf("stopping server %q", name)
 		lw.Wait()
