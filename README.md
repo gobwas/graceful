@@ -128,7 +128,7 @@ For full source code listing please see the [`example`](example) directory.
 
 # Status
 
-This library is not tagged s stable version (neither tagged at all). 
+This library is not tagged as stable version (and not tagged at all yet). 
 This means that backward compatibility can be broken due some changes or
 refactoring.
 
