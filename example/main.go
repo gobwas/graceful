@@ -63,7 +63,7 @@ func main() {
 
 	// Start server.
 	go http.Serve(lw, http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
-		fmt.Fprintf(rw, "Hello, I am a graceful server %q!", name)
+		fmt.Fprintf(rw, "Hello, I am a graceful server %q!\n", name)
 		time.Sleep(*sleep)
 	}))
 
