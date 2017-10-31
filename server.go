@@ -68,10 +68,21 @@ func Serve(ln *net.UnixListener, handler Handler) error {
 
 // Server sends descriptors by calling Handler's Hanlde() method for every
 // accepted connection.
+//
+// Note that client and server using this package MUST select the same buffer
+// sizes for the meta fields and descriptors. Another option is to use the
+// global functions which use default sizes under the hood.
 type Server struct {
+	// MsgBufferSize defines size of the buffer for serialized Meta fields
+	MsgBufferSize int
+
+	// OOBBufferSize defines size of the buffer for serialized descriptors.
+	OOBBufferSize int
+
 	// Handler is a neccessary field that contains logic of sending descriptors
 	// to the every arrived connection.
 	Handler Handler
+
 	// Logger contains optional implementation of any *Logger interfaces
 	// provided by this package.
 	// If Logger is nil, then no logging is made.
@@ -118,7 +129,7 @@ func (s *Server) Serve(ln *net.UnixListener) error {
 			}()
 
 			resp := newResponseWriter(
-				conn, msgBufferSize, oobBufferSize,
+				conn, s.MsgBufferSize, s.OOBBufferSize,
 				serverLogger{s},
 			)
 			s.Handler.Handle(conn, resp)
