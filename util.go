@@ -31,3 +31,10 @@ func nameConn(conn net.Conn) string {
 	return conn.LocalAddr().Network() + ":" + conn.LocalAddr().String() +
 		" > " + conn.RemoteAddr().Network() + ":" + conn.RemoteAddr().String()
 }
+
+func nonZero(a, b int) int {
+	if a != 0 {
+		return a
+	}
+	return b
+}

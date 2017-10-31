@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	oobBufferSize = 4096
-	msgBufferSize = 4096
+	oobDefaultBufferSize = 4096
+	msgDefaultBufferSize = 4096
 )
 
 // Meta contains name of a corresponding file descriptor and a custom meta
@@ -55,7 +55,9 @@ func (cb CallbackHandler) Handle(net.Conn, ResponseWriter) {
 // ListenAndServe creates Server instance with given handler and then calls
 // server.ListenAndServe(addr) to handle incoming connections.
 func ListenAndServe(addr string, handler Handler) error {
-	server := &Server{Handler: handler}
+	server := &Server{
+		Handler: handler,
+	}
 	return server.ListenAndServe(addr)
 }
 
@@ -74,9 +76,11 @@ func Serve(ln *net.UnixListener, handler Handler) error {
 // global functions which use default sizes under the hood.
 type Server struct {
 	// MsgBufferSize defines size of the buffer for serialized Meta fields
+	// If MsgBufferSize is zero, then the default size is used.
 	MsgBufferSize int
 
 	// OOBBufferSize defines size of the buffer for serialized descriptors.
+	// If OOBBufferSize is zero, then the default size is used.
 	OOBBufferSize int
 
 	// Handler is a neccessary field that contains logic of sending descriptors
@@ -104,6 +108,10 @@ func (s *Server) ListenAndServe(addr string) error {
 // goroutine for each. That goroutine calls s.Handler.Handle(conn, rw) and
 // exits.
 func (s *Server) Serve(ln *net.UnixListener) error {
+	var (
+		msgn = nonZero(s.MsgBufferSize, msgDefaultBufferSize)
+		oobn = nonZero(s.OOBBufferSize, oobDefaultBufferSize)
+	)
 	for {
 		conn, err := ln.AcceptUnix()
 		if terr, ok := err.(net.Error); ok && terr.Temporary() {
@@ -129,7 +137,7 @@ func (s *Server) Serve(ln *net.UnixListener) error {
 			}()
 
 			resp := newResponseWriter(
-				conn, s.MsgBufferSize, s.OOBBufferSize,
+				conn, msgn, oobn,
 				serverLogger{s},
 			)
 			s.Handler.Handle(conn, resp)
@@ -281,7 +289,7 @@ func (b *buffer) Bytes() []byte {
 
 // Send is a standalone file descriptor to conn sender.
 func Send(conn *net.UnixConn, fd int, meta Meta) error {
-	rw := newResponseWriter(conn, msgBufferSize, oobBufferSize, nil)
+	rw := newResponseWriter(conn, msgDefaultBufferSize, oobDefaultBufferSize, nil)
 	rw.Write(fd, meta)
 	return rw.Flush()
 }

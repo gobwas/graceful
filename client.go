@@ -22,21 +22,21 @@ type ReceiveCallback func(fd int, meta Meta)
 // Receive dials to the "unix" network address addr and appends all received
 // descriptors sent by the server to the given slice.
 func Receive(addr string, cb ReceiveCallback) error {
-	c := NewClient(msgBufferSize, oobBufferSize)
+	c := NewClient(msgDefaultBufferSize, oobDefaultBufferSize)
 	return c.Receive(addr, cb)
 }
 
 // ReceiveMsg reads a single control message contents and appends parsed data
 // to the given slice of Descriptors.
 func ReceiveMsg(conn *net.UnixConn, cb ReceiveCallback) error {
-	c := NewClient(msgBufferSize, oobBufferSize)
+	c := NewClient(msgDefaultBufferSize, oobDefaultBufferSize)
 	return c.ReceiveMsg(conn, cb)
 }
 
 // ReceiveAll reads all control messages until EOF. If appends parsed data to
 // the given slice of Descriptors.
 func ReceiveAll(conn *net.UnixConn, cb ReceiveCallback) error {
-	c := NewClient(msgBufferSize, oobBufferSize)
+	c := NewClient(msgDefaultBufferSize, oobDefaultBufferSize)
 	return c.ReceiveAll(conn, cb)
 }
 
@@ -86,16 +86,16 @@ func (c *Client) ReceiveAll(conn *net.UnixConn, cb ReceiveCallback) error {
 func receive(conn *net.UnixConn, msg, oob []byte, cb func(int, Meta)) error {
 	msgn, oobn, _, _, err := conn.ReadMsgUnix(msg, oob)
 	if err != nil {
-		return err
-	}
-
-	cmsg, err := syscall.ParseSocketControlMessage(oob[:oobn])
-	if err != nil {
 		if isEOF(err) {
 			// Set err to io.EOF cause ReadMsgUnix returns net.OpError for
 			// EOF case.
 			err = io.EOF
 		}
+		return err
+	}
+
+	cmsg, err := syscall.ParseSocketControlMessage(oob[:oobn])
+	if err != nil {
 		return err
 	}
 	if len(cmsg) == 0 {

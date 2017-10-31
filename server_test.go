@@ -16,7 +16,7 @@ const (
 
 func defaultResponseWriter(conn *net.UnixConn) *responseWriter {
 	return newResponseWriter(
-		conn, msgBufferSize, oobBufferSize,
+		conn, msgDefaultBufferSize, oobDefaultBufferSize,
 		DefaultLogger{Prefix: "test"},
 	)
 }
