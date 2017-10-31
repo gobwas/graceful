@@ -56,8 +56,8 @@ func main() {
 	// Generate random 8 byte name to send within response.
 	name := randomName(8)
 	log.Printf(
-		"starting server %q on %q (%q %s)",
-		name, *addr, ln.Addr().Network(), ln.Addr(),
+		"starting server %q on %q %s",
+		name, ln.Addr().Network(), ln.Addr(),
 	)
 	defer log.Printf("stopped server %q", name)
 
