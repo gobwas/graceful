@@ -64,7 +64,7 @@ func main() {
 	// Start server.
 	go http.Serve(lw, http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
 		fmt.Fprintf(rw, "Hello, I am a graceful server %q!", name)
-		time.Sleep(5 * time.Second)
+		time.Sleep(*sleep)
 	}))
 
 	// Create graceful server socket to pass current listener to the new
