@@ -2,7 +2,6 @@ package graceful
 
 import (
 	"bytes"
-	"log"
 	"reflect"
 	"testing"
 )
@@ -20,8 +19,6 @@ func TestMeta(t *testing.T) {
 	if act, exp := int(n), buf.Len(); act != exp {
 		t.Fatalf("unexpected number of wrote bytes: %d; want %d", act, exp)
 	}
-
-	log.Println(buf.Bytes(), buf.Len())
 
 	m2, err := MetaFrom(buf)
 	if err != nil {
