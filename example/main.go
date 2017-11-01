@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -10,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
@@ -45,15 +45,6 @@ func main() {
 		log.Fatalf("can not listen on %q: %v", *addr, err)
 	}
 
-	// Wrap listener such that all accepted connections are registered inside
-	// innter sync.WaitGroup. We will Wait() for them after new application
-	// instance appear.
-	//
-	// Note that in some cases such simple solution can not fit performance needs.
-	// Wrapped connections does not work well with net.Buffers implementation.
-	// See https://github.com/golang/go/issues/21756.
-	lw := watchListener(ln)
-
 	// Generate random 8 byte name to send within response.
 	name := randomName(8)
 	log.Printf(
@@ -62,11 +53,11 @@ func main() {
 	)
 	defer log.Printf("stopped server %q", name)
 
-	// Start server.
-	go http.Serve(lw, http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+	server := http.Server{Handler: http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
 		fmt.Fprintf(rw, "Hello, I am a graceful server %q!\n", name)
 		time.Sleep(*sleep)
-	}))
+	})}
+	go server.Serve(ln)
 
 	// Create graceful server socket to pass current listener to the new
 	// application instance in the future.
@@ -105,7 +96,7 @@ func main() {
 	case <-restart:
 		// Wait all accepted connection to be processed before exit.
 		log.Printf("stopping server %q", name)
-		lw.Wait()
+		server.Shutdown(context.Background())
 	case <-sig:
 		gln.Close()
 	}
@@ -118,37 +109,4 @@ func randomName(n int) string {
 		p[i] = byte('A' + rand.Intn('Z'-'A'+1))
 	}
 	return string(p)
-}
-
-func watchListener(ln net.Listener) *listener {
-	return &listener{Listener: ln}
-}
-
-type listener struct {
-	net.Listener
-	wg sync.WaitGroup
-}
-
-type conn struct {
-	net.Conn
-	onClose func()
-}
-
-func (c conn) Close() error {
-	err := c.Conn.Close()
-	c.onClose()
-	return err
-}
-
-func (l *listener) Accept() (net.Conn, error) {
-	c, err := l.Listener.Accept()
-	if err != nil {
-		return nil, err
-	}
-	l.wg.Add(1)
-	return conn{c, l.wg.Done}, nil
-}
-
-func (l *listener) Wait() {
-	l.wg.Wait()
 }
