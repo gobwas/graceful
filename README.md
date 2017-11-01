@@ -10,7 +10,7 @@
 Package graceful provides tools for sharing file descriptors between the
 processes.
 
-The most common intent to use it is to get graceful restarts of an application.
+The most common reason to use it is the ability of graceful restart of an application.
 
 # Usage
 
