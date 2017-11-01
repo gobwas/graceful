@@ -47,7 +47,7 @@ err := graceful.Receive("/var/run/app.sock", func(fd int, meta io.Reader) {
 // connection on unix domain socket "/var/run/app.sock".
 go graceful.ListenAndServe("/var/run/app.sock", graceful.SequenceHandler(
 	graceful.ListenerHandler(ln, nil),
-	graceful.FileHandler(file, Meta{
+	graceful.FileHandler(file, graceful.Meta{
 		"name": file.Name(),
 	}),
 ))
