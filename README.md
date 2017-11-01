@@ -23,19 +23,33 @@ The most common use of `graceful` looks like this:
 
 ```go
 // Somewhere close to the application init.
-err := graceful.Receive("/var/run/app.sock", func(fd int, meta graceful.Meta) {
+err := graceful.Receive("/var/run/app.sock", func(fd int, meta io.Reader) {
 	// Handle received descriptor depending on application logic.
-	// For net.Listener and net.Conn there are helper functions
-	// graceful.FdListener() and graceful.FdConn().
+	// 
+	// meta is an additional information that corresponds to the descriptor and
+	// represented by an io.Reader. User is free to select strategy of
+	// marshaling/unmarshaling this information.
+	//	
+	// There is a helper type called graceful.Meta that could be used to send
+	// key-value pairs of meta without additional lines of code.
+	if meta == nil {
+		ln = graceful.FdListener(fd)
+		return
+	}
+	m, err := graceful.MetaFrom(meta)
+	if err == nil {
+		file = os.NewFile(fd, m["name"])
+	}
 })
 
 // Somewhere in the application.
-// This code will send `ln`, `conn` and `file` descriptors to every accepted
+// This code will send `ln` and `file` descriptors to every accepted
 // connection on unix domain socket "/var/run/app.sock".
 go graceful.ListenAndServe("/var/run/app.sock", graceful.SequenceHandler(
-	graceful.ListenerHandler(ln),
-	graceful.ConnHandler(conn),
-	graceful.FileHandler(file),
+	graceful.ListenerHandler(ln, nil),
+	graceful.FileHandler(file, Meta{
+		"name": file.Name(),
+	}),
 ))
 ```
 
@@ -53,23 +67,17 @@ ln, err := net.Listen("unix", "/var/run/app.sock")
 if err != nil {
 	// handle error
 }
-
 app, err := ln.Accept()
 if err != nil {
 	// handle error
 }
-
 // Send some application specific data first.
 if _, err := app.Write(data); err != nil {
 	// handle error
 }
-
 // Then send some descriptors to the connection.
-err := graceful.SendListenerTo(app, ln, nil)
-
-
+graceful.SendListenerTo(app, ln, nil)
 ```
-
 
 There is an [example web application](example) that handles restarts
 gracefully. Note that it does not handle `SIGTERM` signal just to show up that
