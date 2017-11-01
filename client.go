@@ -151,8 +151,10 @@ func receive(c net.Conn, msg, oob []byte, cb func(int, io.Reader)) error {
 			meta = io.LimitReader(r, n)
 		}
 		cb(fd, meta)
-		// Ensure that all meta bytes was read.
-		io.Copy(ioutil.Discard, meta)
+		if meta != nil {
+			// Ensure that all meta bytes was read.
+			io.Copy(ioutil.Discard, meta)
+		}
 	}
 
 	return nil
