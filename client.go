@@ -27,6 +27,8 @@ var ErrNotUnixConn = errors.New("not a unix connection")
 // optional meta information represented by an io.Reader.
 //
 // Note that meta reader is only valid until callback returns.
+// If server does not provide additional information for descriptor, meta
+// argument will be nil.
 type ReceiveCallback func(fd int, meta io.Reader)
 
 // Receive dials to the "unix" network address addr and calls cb for each
@@ -79,16 +81,7 @@ func (c *Client) Receive(addr string, cb ReceiveCallback) error {
 	}
 	defer conn.Close()
 
-	for {
-		err := c.ReceiveFrom(conn, cb)
-		if err != nil {
-			if err == io.EOF {
-				err = nil
-			}
-			return err
-		}
-	}
-	return nil
+	return c.ReceiveAllFrom(conn, cb)
 }
 
 // ReceiveFrom reads a single control message from the given connection conn
@@ -100,7 +93,16 @@ func (c *Client) ReceiveFrom(conn net.Conn, cb ReceiveCallback) error {
 // ReceiveAllFrom reads all control messages from the given connection conn and
 // calls cb for each descriptor inside those messages.
 func (c *Client) ReceiveAllFrom(conn net.Conn, cb ReceiveCallback) error {
-	return receive(conn, c.msg, c.oob, cb)
+	for {
+		err := receive(conn, c.msg, c.oob, cb)
+		if err != nil {
+			if err == io.EOF {
+				err = nil
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 func receive(c net.Conn, msg, oob []byte, cb func(int, io.Reader)) error {
@@ -144,7 +146,10 @@ func receive(c net.Conn, msg, oob []byte, cb func(int, io.Reader)) error {
 		}
 		n := int64(binary.LittleEndian.Uint32(p))
 
-		meta := io.LimitReader(r, n)
+		var meta io.Reader
+		if n > 0 {
+			meta = io.LimitReader(r, n)
+		}
 		cb(fd, meta)
 		// Ensure that all meta bytes was read.
 		io.Copy(ioutil.Discard, meta)
