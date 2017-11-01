@@ -2,9 +2,11 @@ package graceful
 
 import (
 	"bytes"
-	"encoding/gob"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"syscall"
 )
@@ -15,29 +17,37 @@ var (
 	ErrEmptyFileDescriptors = fmt.Errorf("empty file descriptors")
 )
 
+// ErrNotUnixConn is returned by a Client when not a *net.UnixConn is
+// passed to its Receive* methods.
+var ErrNotUnixConn = errors.New("not a unix connection")
+
 // ReceiveCallback describes a function that will be called on each received
 // descriptor while parsing control messages.
-type ReceiveCallback func(fd int, meta Meta)
+// Its first argument is a received file descriptor. Its second argument is an
+// optional meta information represented by an io.Reader.
+//
+// Note that meta reader is only valid until callback returns.
+type ReceiveCallback func(fd int, meta io.Reader)
 
-// Receive dials to the "unix" network address addr and appends all received
-// descriptors sent by the server to the given slice.
+// Receive dials to the "unix" network address addr and calls cb for each
+// received descriptor from it until EOF.
 func Receive(addr string, cb ReceiveCallback) error {
 	c := NewClient(msgDefaultBufferSize, oobDefaultBufferSize)
 	return c.Receive(addr, cb)
 }
 
-// ReceiveMsg reads a single control message contents and appends parsed data
-// to the given slice of Descriptors.
-func ReceiveMsg(conn *net.UnixConn, cb ReceiveCallback) error {
+// ReceiveFrom reads a single control message from the given connection conn
+// and calls cb for each descriptor inside that message.
+func ReceiveFrom(conn net.Conn, cb ReceiveCallback) error {
 	c := NewClient(msgDefaultBufferSize, oobDefaultBufferSize)
-	return c.ReceiveMsg(conn, cb)
+	return c.ReceiveFrom(conn, cb)
 }
 
-// ReceiveAll reads all control messages until EOF. If appends parsed data to
-// the given slice of Descriptors.
-func ReceiveAll(conn *net.UnixConn, cb ReceiveCallback) error {
+// ReceiveAllFrom reads all control messages from the given connection conn and
+// calls cb for each descriptor inside those messages.
+func ReceiveAllFrom(conn net.Conn, cb ReceiveCallback) error {
 	c := NewClient(msgDefaultBufferSize, oobDefaultBufferSize)
-	return c.ReceiveAll(conn, cb)
+	return c.ReceiveAllFrom(conn, cb)
 }
 
 // Client contains logic of parsing control messages.
@@ -60,30 +70,44 @@ func NewClient(msgn, oobn int) *Client {
 	}
 }
 
-// Receive diales to the "unix" network address addr and appends all received
-// descriptors sent by the server to the given slice.
+// Receive dials to the "unix" network address addr and calls cb for each
+// received descriptor.
 func (c *Client) Receive(addr string, cb ReceiveCallback) error {
 	conn, err := net.Dial("unix", addr)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
-	return c.ReceiveAll(conn.(*net.UnixConn), cb)
+
+	for {
+		err := c.ReceiveFrom(conn, cb)
+		if err != nil {
+			if err == io.EOF {
+				err = nil
+			}
+			return err
+		}
+	}
+	return nil
 }
 
-// ReceiveMsg reads a single control message contents and appends parsed data
-// to the given slice of Descriptors.
-func (c *Client) ReceiveMsg(conn *net.UnixConn, cb ReceiveCallback) error {
+// ReceiveFrom reads a single control message from the given connection conn
+// and calls cb for each descriptor inside that message.
+func (c *Client) ReceiveFrom(conn net.Conn, cb ReceiveCallback) error {
 	return receive(conn, c.msg, c.oob, cb)
 }
 
-// ReceiveAll reads all control messages until EOF. If appends parsed data to
-// the given slice of Descriptors.
-func (c *Client) ReceiveAll(conn *net.UnixConn, cb ReceiveCallback) error {
-	return receiveAll(conn, c.msg, c.oob, cb)
+// ReceiveAllFrom reads all control messages from the given connection conn and
+// calls cb for each descriptor inside those messages.
+func (c *Client) ReceiveAllFrom(conn net.Conn, cb ReceiveCallback) error {
+	return receive(conn, c.msg, c.oob, cb)
 }
 
-func receive(conn *net.UnixConn, msg, oob []byte, cb func(int, Meta)) error {
+func receive(c net.Conn, msg, oob []byte, cb func(int, io.Reader)) error {
+	conn, ok := c.(*net.UnixConn)
+	if !ok {
+		return ErrNotUnixConn
+	}
 	msgn, oobn, _, _, err := conn.ReadMsgUnix(msg, oob)
 	if err != nil {
 		if isEOF(err) {
@@ -109,28 +133,24 @@ func receive(conn *net.UnixConn, msg, oob []byte, cb func(int, Meta)) error {
 		return ErrEmptyFileDescriptors
 	}
 
-	dec := gob.NewDecoder(bytes.NewReader(msg[:msgn]))
+	var (
+		r = bytes.NewReader(msg[:msgn])
+		p = make([]byte, 4)
+	)
 	for _, fd := range fds {
-		var meta Meta
-		if err = dec.Decode(&meta); err != nil {
+		// Read meta header.
+		if _, err := r.Read(p); err != nil {
 			return err
 		}
+		n := int64(binary.LittleEndian.Uint32(p))
+
+		meta := io.LimitReader(r, n)
 		cb(fd, meta)
+		// Ensure that all meta bytes was read.
+		io.Copy(ioutil.Discard, meta)
 	}
 
 	return nil
-}
-
-func receiveAll(conn *net.UnixConn, msg, oob []byte, cb func(fd int, meta Meta)) error {
-	for {
-		err := receive(conn, msg, oob, cb)
-		if isEOF(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-	}
 }
 
 func isEOF(err error) bool {

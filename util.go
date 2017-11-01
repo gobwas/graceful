@@ -7,8 +7,8 @@ import (
 
 // FdListener is a helper function that converts given descriptor to the
 // net.Listener interface.
-func FdListener(fd int, meta Meta) (net.Listener, error) {
-	f := os.NewFile(uintptr(fd), meta.Name)
+func FdListener(fd int) (net.Listener, error) {
+	f := os.NewFile(uintptr(fd), "")
 	ln, err := net.FileListener(f)
 	f.Close() // FileListener made dup() inside.
 	return ln, err
@@ -16,8 +16,8 @@ func FdListener(fd int, meta Meta) (net.Listener, error) {
 
 // FdConn is a helper function that converts given descriptor to the
 // net.Conn interface.
-func FdConn(fd int, meta Meta) (net.Conn, error) {
-	f := os.NewFile(uintptr(fd), meta.Name)
+func FdConn(fd int) (net.Conn, error) {
+	f := os.NewFile(uintptr(fd), "")
 	conn, err := net.FileConn(f)
 	f.Close() // FileConn made dup() inside.
 	return conn, err

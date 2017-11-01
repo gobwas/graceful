@@ -1,10 +1,12 @@
 package graceful
 
 import (
-	"encoding/gob"
+	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 	"net"
+	"os"
 	"runtime"
 	"syscall"
 	"time"
@@ -15,57 +17,77 @@ const (
 	msgDefaultBufferSize = 4096
 )
 
-// Meta contains name of a corresponding file descriptor and a custom meta
-// fields.
-type Meta struct {
-	Name   string
-	Custom map[string]interface{}
-}
+// Errors used by the Server and server helpers.
+var (
+	// ErrNotUnixListener is returned by a Server when not a *net.UnixListener
+	// is passed to its Serve() method.
+	ErrNotUnixListener = errors.New("not a unix listener")
+
+	// ErrLongWrite is returned by the ResponseWriter or Send* functions when
+	// data that want be written is too large to be buffered.
+	//
+	// In this case user should send data separately to the client.
+	//
+	// Note that it is not possible to send messages larger than selected
+	// buffer size because client still will not receive it due to that client
+	// and server must use the same buffer size for reading and writing.
+	ErrLongWrite = errors.New("long write")
+)
 
 // ResponseWriter describes an object that can receive a descriptor.
 type ResponseWriter interface {
 	Logger
-	Write(fd int, meta Meta) error
-}
-
-// Handler describes an object that can send descriptors to the connection with
-// given ResponseWriter.
-type Handler interface {
-	Handle(net.Conn, ResponseWriter)
-}
-
-// HandlerFunc is an adapter to allow the use of ordinary functions as
-// Handlers.
-type HandlerFunc func(net.Conn, ResponseWriter)
-
-// Handle calls h(conn, resp).
-func (h HandlerFunc) Handle(conn net.Conn, resp ResponseWriter) {
-	h(conn, resp)
-}
-
-// HandlerFunc is an adapter to allow the use of ordinary functions with empty
-// arguments as Handlers.
-type CallbackHandler func()
-
-// Handle calls cb().
-func (cb CallbackHandler) Handle(net.Conn, ResponseWriter) {
-	cb()
+	// Write prepares file descriptor fd to be sent as well as an optional meta
+	// information represented by an io.WriterTo.
+	Write(fd int, meta io.WriterTo) error
 }
 
 // ListenAndServe creates Server instance with given handler and then calls
 // server.ListenAndServe(addr) to handle incoming connections.
 func ListenAndServe(addr string, handler Handler) error {
-	server := &Server{
-		Handler: handler,
-	}
+	server := &Server{Handler: handler}
 	return server.ListenAndServe(addr)
 }
 
 // Serve creates Server instance with given handler and then calls
 // server.Serve(ln) to handle incoming connections.
-func Serve(ln *net.UnixListener, handler Handler) error {
+func Serve(ln net.Listener, handler Handler) error {
 	server := &Server{Handler: handler}
 	return server.Serve(ln)
+}
+
+// DefaultServer is an empty Server that is used by a Send* global functions as
+// a method receiver.
+var DefaultServer Server
+
+// Send dials to the "unix" network address addr and sends file descriptor to
+// the peer.
+func Send(addr string, fd int, meta io.WriterTo) error {
+	conn, err := net.Dial("unix", addr)
+	if err != nil {
+		return err
+	}
+	return SendTo(conn, fd, meta)
+}
+
+// SendTo sends file descriptor fd and its meta to the given conn.
+func SendTo(conn net.Conn, fd int, meta io.WriterTo) error {
+	return DefaultServer.SendTo(conn, fd, meta)
+}
+
+// SendListenerTo sends listener ln and its meta to the given conn.
+func SendListenerTo(conn net.Conn, ln net.Listener, meta io.WriterTo) error {
+	return DefaultServer.SendListenerTo(conn, ln, meta)
+}
+
+// SendConnTo sends connection conn and its meta to the given connection dst.
+func SendConnTo(dst, conn net.Conn, meta io.WriterTo) error {
+	return DefaultServer.SendConnTo(dst, conn, meta)
+}
+
+// SendFileTo sends file and its meta to the given conn.
+func SendFileTo(conn net.Conn, file *os.File, meta io.WriterTo) error {
+	return DefaultServer.SendFileTo(conn, file, meta)
 }
 
 // Server sends descriptors by calling Handler's Hanlde() method for every
@@ -75,7 +97,7 @@ func Serve(ln *net.UnixListener, handler Handler) error {
 // sizes for the meta fields and descriptors. Another option is to use the
 // global functions which use default sizes under the hood.
 type Server struct {
-	// MsgBufferSize defines size of the buffer for serialized Meta fields
+	// MsgBufferSize defines size of the buffer for serialized io.WriterTo fields
 	// If MsgBufferSize is zero, then the default size is used.
 	MsgBufferSize int
 
@@ -101,17 +123,17 @@ func (s *Server) ListenAndServe(addr string) error {
 		return err
 	}
 	defer ln.Close()
-	return s.Serve(ln.(*net.UnixListener))
+	return s.Serve(ln)
 }
 
-// Serve accepts incoming connections on the listener ln creating a new
+// Serve accepts incoming connections on the listener l creating a new
 // goroutine for each. That goroutine calls s.Handler.Handle(conn, rw) and
 // exits.
-func (s *Server) Serve(ln *net.UnixListener) error {
-	var (
-		msgn = nonZero(s.MsgBufferSize, msgDefaultBufferSize)
-		oobn = nonZero(s.OOBBufferSize, oobDefaultBufferSize)
-	)
+func (s *Server) Serve(l net.Listener) error {
+	ln, ok := l.(*net.UnixListener)
+	if !ok {
+		return ErrNotUnixListener
+	}
 	for {
 		conn, err := ln.AcceptUnix()
 		if terr, ok := err.(net.Error); ok && terr.Temporary() {
@@ -136,10 +158,9 @@ func (s *Server) Serve(ln *net.UnixListener) error {
 				}
 			}()
 
-			resp := newResponseWriter(
-				conn, msgn, oobn,
-				serverLogger{s},
-			)
+			// We do not handle err here cause it only be when conn is not a
+			// *net.UnixConn. Here it is always false.
+			resp, _ := s.newResponseWriter(conn)
 			s.Handler.Handle(conn, resp)
 
 			if err := resp.Flush(); err != nil {
@@ -152,6 +173,58 @@ func (s *Server) Serve(ln *net.UnixListener) error {
 			conn.Close()
 		}()
 	}
+}
+
+// SendTo sends file descriptor fd and its meta to the given conn.
+func (s *Server) SendTo(conn net.Conn, fd int, meta io.WriterTo) error {
+	rw, err := s.newResponseWriter(conn)
+	if err != nil {
+		return err
+	}
+	rw.Write(fd, meta)
+	return rw.Flush()
+}
+
+// SendListenerTo sends listener ln and its meta to the given conn.
+func (s *Server) SendListenerTo(conn net.Conn, ln net.Listener, meta io.WriterTo) error {
+	rw, err := s.newResponseWriter(conn)
+	if err != nil {
+		return err
+	}
+	return SendListener(rw, ln, meta)
+}
+
+// SendConnTo sends connection conn and its meta to the given connection dst.
+func (s *Server) SendConnTo(dst, conn net.Conn, meta io.WriterTo) error {
+	rw, err := s.newResponseWriter(conn)
+	if err != nil {
+		return err
+	}
+	return SendConn(rw, conn, meta)
+}
+
+// SendFileTo sends file and its meta to the given conn.
+func (s *Server) SendFileTo(conn net.Conn, file *os.File, meta io.WriterTo) error {
+	rw, err := s.newResponseWriter(conn)
+	if err != nil {
+		return err
+	}
+	return SendFile(rw, file, meta)
+}
+
+func (s *Server) newResponseWriter(conn net.Conn) (*responseWriter, error) {
+	c, ok := conn.(*net.UnixConn)
+	if !ok {
+		return nil, ErrNotUnixConn
+	}
+	var (
+		msgn = nonZero(s.MsgBufferSize, msgDefaultBufferSize)
+		oobn = nonZero(s.OOBBufferSize, oobDefaultBufferSize)
+	)
+	return newResponseWriter(
+		c, msgn, oobn,
+		serverLogger{s},
+	), nil
 }
 
 func (s *Server) debugf(f string, args ...interface{}) {
@@ -178,8 +251,8 @@ type responseWriter struct {
 	conn *net.UnixConn
 
 	fds []int
-	buf *buffer
-	enc *gob.Encoder
+	buf []byte
+	n   int
 
 	err error
 }
@@ -187,43 +260,89 @@ type responseWriter struct {
 // newResponseWriter returns ResponseWriter instance that writes descriptors to
 // the given conn.
 func newResponseWriter(conn *net.UnixConn, msgn, oobn int, log Logger) *responseWriter {
-	buf := newBuffer(msgn)
-	enc := gob.NewEncoder(buf)
 	r := &responseWriter{
 		Logger: log,
 		conn:   conn,
 
 		fds: make([]int, 0, sizeFromCmsgSpace(oobn)),
-		buf: buf,
-		enc: enc,
+		buf: make([]byte, msgn),
 	}
 	return r
 }
 
-var ErrLongWrite = errors.New("long write")
+const msgHeaderSize = 4
 
-func (rw *responseWriter) Write(fd int, meta Meta) (ret error) {
+var zeroHeader = []byte{0, 0, 0, 0}
+
+func (rw *responseWriter) Write(fd int, meta io.WriterTo) (ret error) {
 	if rw.err != nil {
 		return rw.err
 	}
+	var (
+		metaBytes []byte
+		mustCopy  bool
+	)
 	for {
-		var err error
 		if len(rw.fds) == cap(rw.fds) {
+			// No space for a new descriptor.
 			goto flush
 		}
-		err = rw.enc.Encode(meta)
-		if err == ErrLongWrite {
+		if len(rw.buf)-rw.n < msgHeaderSize {
+			// No space even for an empty meta.
 			goto flush
 		}
-		if err != nil {
-			rw.err = err
-			return err
+		if meta == nil {
+			rw.n += copy(rw.buf[rw.n:], zeroHeader)
+		} else {
+			if metaBytes == nil {
+				// Skip msgHeaderSize bytes and get the slice.
+				p := rw.buf[rw.n+msgHeaderSize:]
+				// Create bytes.Buffer with slice backed by rw.buf
+				// hoping that no reallocation will be made.
+				buf := bytes.NewBuffer(p[:0])
+				limbuf := &limitedWriter{
+					W: buf,
+					// Anyway, we can handle only len(rw.buf) bytes even after
+					// flushing.
+					N: len(rw.buf) - msgHeaderSize,
+				}
+				n, err := meta.WriteTo(limbuf)
+				if limbuf.E {
+					return ErrLongWrite
+				}
+				if err != nil {
+					return err
+				}
+				if n == 0 {
+					meta = nil
+					continue
+				}
+
+				metaBytes = buf.Bytes()
+				if &metaBytes[0] != &p[0] {
+					// Reallocation was made. Must flush before. It is
+					// guaranteed that rw.buf fits metaBytes due to
+					// limitedWriter above.
+					mustCopy = true
+					goto flush
+				}
+			}
+			// Buffer header bytes.
+			binary.LittleEndian.PutUint32(rw.buf[rw.n:], uint32(len(metaBytes)))
+			rw.n += msgHeaderSize
+			// Buffer meta bytes.
+			if mustCopy {
+				rw.n += copy(rw.buf[rw.n:], metaBytes)
+			} else {
+				rw.n += len(metaBytes)
+			}
 		}
 		rw.fds = append(rw.fds, fd)
 		return nil
 
 	flush:
 		if ret != nil {
+			// Too many flushes – no free space to handle this write.
 			return ret
 		}
 		ret = ErrLongWrite
@@ -241,7 +360,7 @@ func (rw *responseWriter) Flush() error {
 		return nil
 	}
 	var (
-		msgBytes = rw.buf.Bytes()
+		msgBytes = rw.buf[:rw.n]
 		oobBytes = syscall.UnixRights(rw.fds...)
 	)
 	msgn, oobn, err := rw.conn.WriteMsgUnix(msgBytes, oobBytes, nil)
@@ -249,7 +368,7 @@ func (rw *responseWriter) Flush() error {
 		err = io.ErrShortWrite
 	}
 	rw.err = err
-	rw.buf.Reset()
+	rw.n = 0
 	rw.fds = rw.fds[:0]
 	return err
 }
@@ -259,37 +378,18 @@ func sizeFromCmsgSpace(n int) int {
 	return n / s
 }
 
-type buffer struct {
-	p []byte
-	n int
+type limitedWriter struct {
+	W io.Writer
+	N int
+	E bool
 }
 
-func newBuffer(n int) *buffer {
-	return &buffer{
-		p: make([]byte, n),
-	}
-}
-
-func (b *buffer) Write(p []byte) (n int, err error) {
-	n = copy(b.p[b.n:], p)
-	if len(p) > n {
+func (w limitedWriter) Write(p []byte) (int, error) {
+	if w.N <= 0 || len(p) > w.N {
+		w.E = true
 		return 0, ErrLongWrite
 	}
-	b.n += n
-	return n, nil
-}
-
-func (b *buffer) Reset() {
-	b.n = 0
-}
-
-func (b *buffer) Bytes() []byte {
-	return b.p[:b.n]
-}
-
-// Send is a standalone file descriptor to conn sender.
-func Send(conn *net.UnixConn, fd int, meta Meta) error {
-	rw := newResponseWriter(conn, msgDefaultBufferSize, oobDefaultBufferSize, nil)
-	rw.Write(fd, meta)
-	return rw.Flush()
+	n, err := w.W.Write(p)
+	w.N -= n
+	return n, err
 }

@@ -14,117 +14,67 @@ The most common intent to use it is to get graceful restarts of an application.
 
 # Usage
 
-Graceful proposes a client-server mechanism of sharing descriptors. That is,
-application that owns a descriptors is a **server** in `graceful` terminology,
-and an application that wants to receive those descriptors is a **client**.
+Graceful proposes a client-server mechanism of sharing file descriptors. 
+That is, application that owns a descriptors is a **server** in `graceful`
+terminology, and an application that wants to receive those descriptors is a
+**client**.
 
-Here is a sketch of [example web application](example) that handles restart
-gracefully. This example app does not handle `SIGTERM` signal just to show up
-how `graceful` could be used in a most simple way. It interprets request for a
-listener descriptor as a termination signal.
-
+The most common use of `graceful` looks like this:
 
 ```go
-package main
+// Somewhere close to the application init.
+err := graceful.Receive("/var/run/app.sock", func(fd int, meta graceful.Meta) {
+	// Handle received descriptor depending on application logic.
+	// For net.Listener and net.Conn there are helper functions
+	// graceful.FdListener() and graceful.FdConn().
+})
 
-import (
-	"flag"
-	"log"
-	"net"
-	"net/http"
-	"os"
-	"os/signal"
-	"syscall"
-
-	"github.com/gobwas/graceful"
-)
-
-var (
-	sock = flag.String("graceful", "/tmp/graceful.sock", "path to graceful unix socket")
-	addr = flag.String("listen", "localhost:3333", "addr to bind to")
-)
-
-func main() {
-	flag.Parse()
-
-	var (
-		// ln is a listener that we will use below for our web server.
-		ln  net.Listener
-		err error
-	)
-	// First assume that some application instance is already running.
-	// Then we could try to request an active listener's descriptor from it.
-	graceful.Receive(*sock, func(fd int, meta graceful.Meta) {
-		ln, err = graceful.FdListener(fd, meta)
-	})
-	if err != nil {
-		// Error normally means that no app is running there.
-		// Thus current instance become listener initializer.
-		ln, err = net.Listen("tcp", *addr)
-	}
-	if err != nil {
-		log.Fatalf("can not listen on %q: %v", *addr, err)
-	}
-
-	// Wrap listener such that all accepted connections are registered inside
-	// inner sync.WaitGroup. We will Wait() for them after new application
-	// instance appear.
-	//
-	// Note that in some cases such simple solution can not fit performance needs.
-	// Wrapped connections does not work well with net.Buffers implementation.
-	// See https://github.com/golang/go/issues/21756.
-	lw := watchListener(ln)
-	go http.Serve(lw, http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
-		// handle request somehow.
-	}))
-
-	// Create graceful server socket to pass current listener to the new
-	// application instance in the future.
-	l, err := net.Listen("unix", *sock)
-	if err != nil {
-		log.Fatalf("can not listen on %q: %v", *sock, err)
-	}
-	gln := l.(*net.UnixListener)
-
-	// restart is a channel which closure means that new instance of
-	// application has been started.
-	restart := make(chan struct{})
-
-	go graceful.Serve(gln, graceful.SequenceHandler(
-		// This "handler" will close graceful socket. This will help us to
-		// avoid races on next socket creation.
-		graceful.CallbackHandler(func() {
-			gln.Close()
-		}),
-
-		// This handler will send our web server's listener descriptor to the
-		// client.
-		graceful.ListenerHandler(ln, graceful.Meta{
-			Name: "http",
-		}),
-
-		// This "handler" close the restart channel, signaling that we can exit.
-		graceful.CallbackHandler(func() {
-			close(restart)
-		}),
-	))
-
-	// Catch SIGINT signal to cleanup gln listener.
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT)
-
-	// Lock on restart until the new app comes.
-	select {
-	case <-restart:
-		// Wait all accepted connection to be processed before exit.
-		lw.Wait()
-	case <-sig:
-		gln.Close()
-	}
-}
+// Somewhere in the application.
+// This code will send `ln`, `conn` and `file` descriptors to every accepted
+// connection on unix domain socket "/var/run/app.sock".
+go graceful.ListenAndServe("/var/run/app.sock", graceful.SequenceHandler(
+	graceful.ListenerHandler(ln),
+	graceful.ConnHandler(conn),
+	graceful.FileHandler(file),
+))
 ```
 
-For full source code listing please see the [`example`](example) directory.
+That is, `graceful` does not force users to stick to some logic of processing
+restarts. It just provides mechanism for sharing descriptors in a client-server
+way.
+
+If you have a more difficult logic of restarts, you could use less general API
+of `graceful`:
+
+```go
+
+// Listen for an upcoming instance at the socket.
+ln, err := net.Listen("unix", "/var/run/app.sock")
+if err != nil {
+	// handle error
+}
+
+app, err := ln.Accept()
+if err != nil {
+	// handle error
+}
+
+// Send some application specific data first.
+if _, err := app.Write(data); err != nil {
+	// handle error
+}
+
+// Then send some descriptors to the connection.
+err := graceful.SendListenerTo(app, ln, nil)
+
+
+```
+
+
+There is an [example web application](example) that handles restarts
+gracefully. Note that it does not handle `SIGTERM` signal just to show up that
+`graceful` if flexible and could be used in a simple way. 
+
 
 # Status
 

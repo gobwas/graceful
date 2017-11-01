@@ -1,10 +1,13 @@
 package graceful
 
 import (
+	"bytes"
+	"encoding/binary"
+	"io"
 	"io/ioutil"
 	"net"
 	"os"
-	"reflect"
+	"strings"
 	"syscall"
 	"testing"
 )
@@ -30,7 +33,7 @@ func TestResponseWriter(t *testing.T) {
 	resp := defaultResponseWriter(server)
 
 	var (
-		expMeta = make([]Meta, 4)
+		expMeta = make([][]byte, 4)
 		expFd   = make([]int, 4)
 	)
 	for i := 0; i < 4; i++ {
@@ -41,13 +44,13 @@ func TestResponseWriter(t *testing.T) {
 		defer os.Remove(f.Name())
 		defer f.Close()
 
-		meta := Meta{Name: f.Name()}
+		meta := strings.NewReader(f.Name())
 		fd := int(f.Fd())
 		if err := resp.Write(fd, meta); err != nil {
 			t.Fatal(err)
 		}
 
-		expMeta[i] = meta
+		expMeta[i] = []byte(f.Name())
 		expFd[i] = fd
 	}
 	if err := resp.Flush(); err != nil {
@@ -56,8 +59,12 @@ func TestResponseWriter(t *testing.T) {
 	server.Close()
 
 	var ds []descriptor
-	err = ReceiveAll(client, func(fd int, meta Meta) {
-		ds = append(ds, descriptor{fd, meta})
+	err = ReceiveAllFrom(client, func(fd int, meta io.Reader) {
+		b, err := ioutil.ReadAll(meta)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ds = append(ds, descriptor{fd, b})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -69,9 +76,9 @@ func TestResponseWriter(t *testing.T) {
 		} else if !same {
 			t.Errorf("file descriptors of #%d file are not the same", i)
 		}
-		if act, exp := d.meta, expMeta[i]; !reflect.DeepEqual(act, exp) {
+		if act, exp := d.meta, expMeta[i]; !bytes.Equal(act, exp) {
 			t.Errorf(
-				"unexpected meta of #%d file:\nact:\t%#v\nexp:\t%#v\n",
+				"unexpected meta of #%d file:\nact:\t%q\nexp:\t%q\n",
 				i, act, exp,
 			)
 		}
@@ -84,20 +91,109 @@ func TestResponseWriter(t *testing.T) {
 	}
 }
 
+func TestResponseWriterFormat(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		msgn int
+		meta []string
+		err  []error
+	}{
+		{
+			msgn: 18,
+			meta: []string{
+				"", "22", "4444", "666666",
+			},
+		},
+		{
+			msgn: 10,
+			meta: []string{
+				"7777777",
+			},
+			err: []error{
+				ErrLongWrite,
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client, server, err := unixSocketpair()
+			if err != nil {
+				t.Fatal(err)
+			}
+			rw := newResponseWriter(
+				server, test.msgn, 4096,
+				DefaultLogger{Prefix: "test"},
+			)
+
+			f, err := ioutil.TempFile(tempFileDir, tempFilePrefix)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			for i, meta := range test.meta {
+				var exp error
+				if test.err != nil {
+					exp = test.err[i]
+				}
+				err := rw.Write(int(f.Fd()), strings.NewReader(meta))
+				if err != exp {
+					t.Errorf(
+						"unexpected error writing %q: %v; want %v",
+						meta, err, exp,
+					)
+				}
+			}
+			if err := rw.Flush(); err != nil {
+				t.Fatal(err)
+			}
+			server.Close()
+
+			bts, err := ioutil.ReadAll(client)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var (
+				r = bytes.NewReader(bts)
+				h = make([]byte, 4)
+			)
+			for i, meta := range test.meta {
+				if test.err != nil && test.err[i] != nil {
+					continue
+				}
+				if _, err := r.Read(h); err != nil {
+					t.Fatalf("error reading #%d item header: %v", i, err)
+				}
+				n := int(binary.LittleEndian.Uint32(h))
+				p := make([]byte, n)
+				if m, err := r.Read(p); m != n || err != nil {
+					t.Fatalf(
+						"error reading #%d item: read %d bytes (%v); want read %d bytes",
+						i, m, err, n,
+					)
+				}
+				if act, exp := string(p), meta; act != exp {
+					t.Errorf("meta #%d is %q; want %q", i, act, exp)
+				}
+			}
+		})
+	}
+}
+
 func TestResponseWriterBuffering(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		msgn int
 		oobn int
 		fdn  int
-		meta Meta
+		meta string
 		err  error
 		exp  int
 	}{
 		{
-			msgn: 64,
+			msgn: 10,
 			oobn: 64,
 			fdn:  1,
+			meta: "7777777",
 			err:  ErrLongWrite,
 		},
 		{
@@ -107,7 +203,7 @@ func TestResponseWriterBuffering(t *testing.T) {
 			exp:  1,
 		},
 		{
-			msgn: 128,
+			msgn: 7,
 			oobn: 128,
 			fdn:  2,
 			exp:  2,
@@ -124,24 +220,24 @@ func TestResponseWriterBuffering(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+
+			f, err := ioutil.TempFile(tempFileDir, tempFilePrefix)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.Remove(f.Name())
+			defer f.Close()
+
 			rw := newResponseWriter(
 				server, test.msgn, test.oobn,
 				DefaultLogger{Prefix: "test"},
 			)
 			for i := 0; i < test.fdn; i++ {
-				var f *os.File
-				f, err = ioutil.TempFile(tempFileDir, tempFilePrefix)
-				if err != nil {
-					t.Fatal(err)
-				}
-				defer os.Remove(f.Name())
-				defer f.Close()
-
-				var (
-					fd   = int(f.Fd())
-					meta = Meta{Name: f.Name()}
+				err = rw.Write(
+					int(f.Fd()),
+					strings.NewReader(test.meta),
 				)
-				if err = rw.Write(fd, meta); err != nil {
+				if err != nil {
 					break
 				}
 			}
@@ -210,7 +306,7 @@ func TestResponseWriterBuffering(t *testing.T) {
 //}
 
 func listenerFile(ln net.Listener) int {
-	f, err := ln.(Filer).File()
+	f, err := ln.(filer).File()
 	if err != nil {
 		panic(err)
 	}

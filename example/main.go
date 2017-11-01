@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net"
@@ -32,10 +33,10 @@ func main() {
 	)
 	// First assume that some application instance is already running.
 	// Then we could try to request an active listener's descriptor from it.
-	err = graceful.Receive(*sock, func(fd int, meta graceful.Meta) {
-		ln, err = graceful.FdListener(fd, meta)
+	err = graceful.Receive(*sock, func(fd int, meta io.Reader) {
+		ln, err = graceful.FdListener(fd)
 	})
-	if err != nil {
+	if ln == nil {
 		// Error normally means that no app is running there.
 		// Thus current instance become listener initializer.
 		ln, err = net.Listen("tcp", *addr)
@@ -69,11 +70,10 @@ func main() {
 
 	// Create graceful server socket to pass current listener to the new
 	// application instance in the future.
-	l, err := net.Listen("unix", *sock)
+	gln, err := net.Listen("unix", *sock)
 	if err != nil {
 		log.Fatalf("can not listen on %q: %v", *sock, err)
 	}
-	gln := l.(*net.UnixListener)
 
 	// restart is a channel which closure means that new instance of
 	// application has been started.
@@ -88,9 +88,7 @@ func main() {
 
 		// This handler will send our web server's listener descriptor to the
 		// client.
-		graceful.ListenerHandler(ln, graceful.Meta{
-			Name: "http",
-		}),
+		graceful.ListenerHandler(ln, nil),
 
 		// This "handler" closes restart channel, signaling that we can exit.
 		graceful.CallbackHandler(func() {

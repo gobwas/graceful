@@ -1,10 +1,12 @@
 package graceful
 
 import (
+	"bytes"
+	"io"
 	"io/ioutil"
 	"net"
 	"os"
-	"reflect"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -12,7 +14,7 @@ import (
 func TestReceive(t *testing.T) {
 	// Prepare files to be sent.
 	var (
-		expMeta = make([]Meta, 4)
+		expMeta = make([][]byte, 4)
 		expFd   = make([]int, 4)
 	)
 	for i := 0; i < 4; i++ {
@@ -24,7 +26,7 @@ func TestReceive(t *testing.T) {
 		defer f.Close()
 
 		expFd[i] = int(f.Fd())
-		expMeta[i] = Meta{Name: f.Name()}
+		expMeta[i] = []byte(strconv.Itoa(i))
 	}
 
 	ln, err := net.Listen("unix", "")
@@ -41,7 +43,7 @@ func TestReceive(t *testing.T) {
 		conn := c.(*net.UnixConn)
 
 		for i := range expFd {
-			if err := Send(conn, expFd[i], expMeta[i]); err != nil {
+			if err := SendTo(conn, expFd[i], bytes.NewReader(expMeta[i])); err != nil {
 				t.Fatal(err)
 			}
 			time.Sleep(time.Millisecond)
@@ -50,8 +52,12 @@ func TestReceive(t *testing.T) {
 	}()
 
 	var ds []descriptor
-	err = Receive(ln.Addr().String(), func(fd int, meta Meta) {
-		ds = append(ds, descriptor{fd, meta})
+	err = Receive(ln.Addr().String(), func(fd int, meta io.Reader) {
+		b, err := ioutil.ReadAll(meta)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ds = append(ds, descriptor{fd, b})
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -63,9 +69,9 @@ func TestReceive(t *testing.T) {
 		} else if !same {
 			t.Errorf("file descriptors of #%d file are not the same", i)
 		}
-		if act, exp := d.meta, expMeta[i]; !reflect.DeepEqual(act, exp) {
+		if act, exp := d.meta, expMeta[i]; !bytes.Equal(act, exp) {
 			t.Errorf(
-				"unexpected meta of #%d file:\nact:\t%#v\nexp:\t%#v\n",
+				"unexpected meta of #%d file:\nact:\t%s\nexp:\t%s\n",
 				i, act, exp,
 			)
 		}
@@ -77,5 +83,5 @@ func TestReceive(t *testing.T) {
 
 type descriptor struct {
 	fd   int
-	meta Meta
+	meta []byte
 }
