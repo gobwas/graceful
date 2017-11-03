@@ -33,10 +33,11 @@ func main() {
 	)
 	// First assume that some application instance is already running.
 	// Then we could try to request an active listener's descriptor from it.
-	err = graceful.Receive(*sock, func(fd int, meta io.Reader) {
+	err = graceful.Receive(*sock, func(fd int, meta io.Reader) error {
 		ln, err = graceful.FdListener(fd)
+		return err
 	})
-	if ln == nil {
+	if err != nil {
 		// Error normally means that no app is running there.
 		// Thus current instance become listener initializer.
 		ln, err = net.Listen("tcp", *addr)

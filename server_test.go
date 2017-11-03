@@ -59,12 +59,13 @@ func TestResponseWriter(t *testing.T) {
 	server.Close()
 
 	var ds []descriptor
-	err = ReceiveAllFrom(client, func(fd int, meta io.Reader) {
+	err = ReceiveAllFrom(client, func(fd int, meta io.Reader) error {
 		b, err := ioutil.ReadAll(meta)
 		if err != nil {
-			t.Fatal(err)
+			return err
 		}
 		ds = append(ds, descriptor{fd, b})
+		return nil
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -26,10 +26,13 @@ var ErrNotUnixConn = errors.New("not a unix connection")
 // Its first argument is a received file descriptor. Its second argument is an
 // optional meta information represented by an io.Reader.
 //
+// If the callback returns non-nil error, then the function to which this
+// callback was given exits immediately with that error.
+//
 // Note that meta reader is only valid until callback returns.
 // If server does not provide additional information for descriptor, meta
 // argument will be nil.
-type ReceiveCallback func(fd int, meta io.Reader)
+type ReceiveCallback func(fd int, meta io.Reader) error
 
 // Receive dials to the "unix" network address addr and calls cb for each
 // received descriptor from it until EOF.
@@ -105,7 +108,7 @@ func (c *Client) ReceiveAllFrom(conn net.Conn, cb ReceiveCallback) error {
 	return nil
 }
 
-func receive(c net.Conn, msg, oob []byte, cb func(int, io.Reader)) error {
+func receive(c net.Conn, msg, oob []byte, cb ReceiveCallback) error {
 	conn, ok := c.(*net.UnixConn)
 	if !ok {
 		return ErrNotUnixConn
@@ -150,10 +153,15 @@ func receive(c net.Conn, msg, oob []byte, cb func(int, io.Reader)) error {
 		if n > 0 {
 			meta = io.LimitReader(r, n)
 		}
-		cb(fd, meta)
+		if err := cb(fd, meta); err != nil {
+			return err
+		}
 		if meta != nil {
 			// Ensure that all meta bytes was read.
-			io.Copy(ioutil.Discard, meta)
+			_, err := io.Copy(ioutil.Discard, meta)
+			if err != nil {
+				return err
+			}
 		}
 	}
 

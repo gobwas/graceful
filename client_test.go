@@ -52,12 +52,13 @@ func TestReceive(t *testing.T) {
 	}()
 
 	var ds []descriptor
-	err = Receive(ln.Addr().String(), func(fd int, meta io.Reader) {
+	err = Receive(ln.Addr().String(), func(fd int, meta io.Reader) error {
 		b, err := ioutil.ReadAll(meta)
 		if err != nil {
-			t.Fatal(err)
+			return err
 		}
 		ds = append(ds, descriptor{fd, b})
+		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
