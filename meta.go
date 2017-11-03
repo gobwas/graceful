@@ -15,7 +15,7 @@ func MetaFrom(r io.Reader) (Meta, error) {
 	return m, err
 }
 
-func (m *Meta) WriteTo(w io.Writer) (int64, error) {
+func (m Meta) WriteTo(w io.Writer) (int64, error) {
 	wc := &writeCounter{W: w}
 	enc := gob.NewEncoder(wc)
 	return wc.N, enc.Encode(m)
