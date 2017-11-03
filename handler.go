@@ -59,6 +59,15 @@ func SendConn(resp ResponseWriter, conn net.Conn, meta io.WriterTo) error {
 	return SendFile(resp, f, meta)
 }
 
+// SendPacketConn sends a connection conn with given meta to the ResponseWriter.
+func SendPacketConn(resp ResponseWriter, conn net.PacketConn, meta io.WriterTo) error {
+	f, err := fileFrom(conn)
+	if err != nil {
+		return err
+	}
+	return SendFile(resp, f, meta)
+}
+
 // SendFile sends a file f with given meta to the ResponseWriter.
 func SendFile(resp ResponseWriter, file *os.File, meta io.WriterTo) error {
 	return resp.Write(int(file.Fd()), meta)
@@ -81,6 +90,17 @@ func ListenerHandler(ln net.Listener, meta io.WriterTo) Handler {
 func ConnHandler(conn net.Conn, meta io.WriterTo) Handler {
 	return HandlerFunc(func(_ net.Conn, resp ResponseWriter) {
 		if err := SendConn(resp, conn, meta); err != nil {
+			resp.Errorf("send conn error: %v", err)
+		}
+	})
+}
+
+// PacketConnHandler returns a Handler that sends conn with given meta to the
+// received connection. If some error occures, it logs it by calling
+// resp.Errorf().
+func PacketConnHandler(conn net.PacketConn, meta io.WriterTo) Handler {
+	return HandlerFunc(func(_ net.Conn, resp ResponseWriter) {
+		if err := SendPacketConn(resp, conn, meta); err != nil {
 			resp.Errorf("send conn error: %v", err)
 		}
 	})
