@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net"
+	"sync"
 	"syscall"
 )
 
@@ -37,42 +38,42 @@ type ReceiveCallback func(fd int, meta io.Reader) error
 // Receive dials to the "unix" network address addr and calls cb for each
 // received descriptor from it until EOF.
 func Receive(addr string, cb ReceiveCallback) error {
-	c := NewClient(msgDefaultBufferSize, oobDefaultBufferSize)
+	c := Client{}
 	return c.Receive(addr, cb)
 }
 
 // ReceiveFrom reads a single control message from the given connection conn
 // and calls cb for each descriptor inside that message.
 func ReceiveFrom(conn net.Conn, cb ReceiveCallback) error {
-	c := NewClient(msgDefaultBufferSize, oobDefaultBufferSize)
+	c := Client{}
 	return c.ReceiveFrom(conn, cb)
 }
 
 // ReceiveAllFrom reads all control messages from the given connection conn and
 // calls cb for each descriptor inside those messages.
 func ReceiveAllFrom(conn net.Conn, cb ReceiveCallback) error {
-	c := NewClient(msgDefaultBufferSize, oobDefaultBufferSize)
+	c := Client{}
 	return c.ReceiveAllFrom(conn, cb)
 }
 
 // Client contains logic of parsing control messages.
 type Client struct {
-	msg []byte
-	oob []byte
-}
+	// MsgBufferSize and OOBBufferSize defines an inner buffer sizes.
+	//
+	// MsgBufferSize defines size of the buffer for meta fields.
+	// If MsgBufferSize is zero, then the default size is used.
+	//
+	// OOBBufferSize defines size of the buffer for serialized descriptors.
+	// If OOBBufferSize is zero, then the default size is used.
+	//
+	// Note that client and server using this package MUST select the same
+	// buffer sizes. Another option is to use the global functions which use
+	// default sizes under the hood.
+	MsgBufferSize, OOBBufferSize int
 
-// NewClient creates new Client with given sizes for innter buffers. The "msgn"
-// argument defines size of the buffer for serialized Meta fields, the "oobn"
-// defines the buffer size for serialized descriptors.
-//
-// Note that client and server using this package MUST select the same buffer
-// sizes. Another option is to use the global functions which use default
-// sizes under the hood.
-func NewClient(msgn, oobn int) *Client {
-	return &Client{
-		msg: make([]byte, msgn),
-		oob: make([]byte, oobn),
-	}
+	once sync.Once
+	msg  []byte
+	oob  []byte
 }
 
 // Receive dials to the "unix" network address addr and calls cb for each
@@ -90,12 +91,14 @@ func (c *Client) Receive(addr string, cb ReceiveCallback) error {
 // ReceiveFrom reads a single control message from the given connection conn
 // and calls cb for each descriptor inside that message.
 func (c *Client) ReceiveFrom(conn net.Conn, cb ReceiveCallback) error {
+	c.initOnce()
 	return receive(conn, c.msg, c.oob, cb)
 }
 
 // ReceiveAllFrom reads all control messages from the given connection conn and
 // calls cb for each descriptor inside those messages.
 func (c *Client) ReceiveAllFrom(conn net.Conn, cb ReceiveCallback) error {
+	c.initOnce()
 	for {
 		err := receive(conn, c.msg, c.oob, cb)
 		if err != nil {
@@ -106,6 +109,21 @@ func (c *Client) ReceiveAllFrom(conn net.Conn, cb ReceiveCallback) error {
 		}
 	}
 	return nil
+}
+
+func (c *Client) initOnce() {
+	c.once.Do(func() {
+		msgn := c.MsgBufferSize
+		if msgn == 0 {
+			msgn = msgDefaultBufferSize
+		}
+		oobn := c.OOBBufferSize
+		if oobn == 0 {
+			oobn = oobDefaultBufferSize
+		}
+		c.msg = make([]byte, msgn)
+		c.oob = make([]byte, oobn)
+	})
 }
 
 func receive(c net.Conn, msg, oob []byte, cb ReceiveCallback) error {

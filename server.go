@@ -97,7 +97,7 @@ func SendFileTo(conn net.Conn, file *os.File, meta io.WriterTo) error {
 // sizes for the meta fields and descriptors. Another option is to use the
 // global functions which use default sizes under the hood.
 type Server struct {
-	// MsgBufferSize defines size of the buffer for serialized io.WriterTo fields
+	// MsgBufferSize defines size of the buffer for meta fields.
 	// If MsgBufferSize is zero, then the default size is used.
 	MsgBufferSize int
 
@@ -156,6 +156,8 @@ func (s *Server) Serve(l net.Listener) error {
 					buf = buf[:runtime.Stack(buf, false)]
 					s.errorf("panic serving connection %q: %v\n%s", name, err, buf)
 				}
+				s.debugf("closing connection %q", name)
+				conn.Close()
 			}()
 
 			// We do not handle err here cause it only be when conn is not a
@@ -168,9 +170,6 @@ func (s *Server) Serve(l net.Listener) error {
 			} else {
 				s.infof("sent descriptors to %q", name)
 			}
-
-			s.debugf("closing connection %q", name)
-			conn.Close()
 		}()
 	}
 }
