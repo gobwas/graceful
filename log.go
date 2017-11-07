@@ -1,10 +1,5 @@
 package graceful
 
-import (
-	"fmt"
-	"log"
-)
-
 // DebugLogger interface is used by a Sever or a Client
 // to log some debug information.
 type DebugLogger interface {
@@ -31,36 +26,30 @@ type Logger interface {
 	ErrorLogger
 }
 
-// StandardLogger implements all *Logger interfaces. It formats and prints
-// given message via standard `log` pacakge.
-type StandardLogger struct {
-	Prefix      string
-	IgnoreDebug bool
-	IgnoreInfo  bool
-	IgnoreError bool
+type funcLogger struct {
+	debugf func(string, ...interface{})
+	infof  func(string, ...interface{})
+	errorf func(string, ...interface{})
 }
 
-// Debugf formats and prints debug message via standard `log` package.
-// If d.IgnoreDebug is true then it does nothing.
-func (s StandardLogger) Debugf(f string, args ...interface{}) {
-	if !s.IgnoreDebug {
-		log.Print(s.Prefix, "[DEBUG] ", fmt.Sprintf(f, args...))
+// LoggerFunc creates Logger from given functions.
+func LoggerFunc(debugf, infof, errorf func(string, ...interface{})) Logger {
+	return funcLogger{debugf, infof, errorf}
+}
+
+func (f funcLogger) Debugf(s string, args ...interface{}) {
+	if f.debugf != nil {
+		f.debugf(s, args...)
 	}
 }
-
-// Infof formats and prints info message via standard `log` package.
-// If d.IgnoreInfo is true then it does nothing.
-func (s StandardLogger) Infof(f string, args ...interface{}) {
-	if !s.IgnoreInfo {
-		log.Print(s.Prefix, "[INFO] ", fmt.Sprintf(f, args...))
+func (f funcLogger) Infof(s string, args ...interface{}) {
+	if f.infof != nil {
+		f.infof(s, args...)
 	}
 }
-
-// Errorf formats and prints error message via standard `log` package.
-// If d.IgnoreError is true then it does nothing.
-func (s StandardLogger) Errorf(f string, args ...interface{}) {
-	if s.IgnoreError {
-		log.Print(s.Prefix, "[ERROR] ", fmt.Sprintf(f, args...))
+func (f funcLogger) Errorf(s string, args ...interface{}) {
+	if f.errorf != nil {
+		f.errorf(s, args...)
 	}
 }
 

@@ -3,8 +3,10 @@ package graceful
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"net"
 	"os"
 	"strings"
@@ -20,7 +22,7 @@ const (
 func defaultResponseWriter(conn *net.UnixConn) *response {
 	return newResponse(
 		conn, msgDefaultBufferSize, oobDefaultBufferSize,
-		StandardLogger{Prefix: "test"},
+		StandardLogger("test", LogLevelAll),
 	)
 }
 
@@ -122,7 +124,7 @@ func TestResponseWriterFormat(t *testing.T) {
 			}
 			rw := newResponse(
 				server, test.msgn, 4096,
-				StandardLogger{Prefix: "test"},
+				StandardLogger("test", LogLevelAll),
 			)
 
 			f, err := ioutil.TempFile(tempFileDir, tempFilePrefix)
@@ -231,7 +233,7 @@ func TestResponseWriterBuffering(t *testing.T) {
 
 			rw := newResponse(
 				server, test.msgn, test.oobn,
-				StandardLogger{Prefix: "test"},
+				StandardLogger("test", LogLevelAll),
 			)
 			for i := 0; i < test.fdn; i++ {
 				err = rw.Write(
@@ -348,4 +350,32 @@ func unixSocketpair() (client, server *net.UnixConn, err error) {
 	server = s.(*net.UnixConn)
 
 	return client, server, nil
+}
+
+const (
+	LogLevelDebug byte = 1 << iota
+	LogLevelInfo
+	LogLevelError
+
+	LogLevelAll byte = LogLevelDebug | LogLevelInfo | LogLevelError
+)
+
+func StandardLogger(prefix string, level byte) Logger {
+	return LoggerFunc(
+		func(s string, args ...interface{}) {
+			if level&LogLevelDebug != 0 {
+				log.Print(prefix, "[DEBUG] ", fmt.Sprintf(s, args...))
+			}
+		},
+		func(s string, args ...interface{}) {
+			if level&LogLevelInfo != 0 {
+				log.Print(prefix, "[INFO] ", fmt.Sprintf(s, args...))
+			}
+		},
+		func(s string, args ...interface{}) {
+			if level&LogLevelError != 0 {
+				log.Print(prefix, "[ERROR] ", fmt.Sprintf(s, args...))
+			}
+		},
+	)
 }
