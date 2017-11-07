@@ -17,10 +17,10 @@ const (
 	tempFilePrefix = "graceful"
 )
 
-func defaultResponseWriter(conn *net.UnixConn) *responseWriter {
-	return newResponseWriter(
+func defaultResponseWriter(conn *net.UnixConn) *response {
+	return newResponse(
 		conn, msgDefaultBufferSize, oobDefaultBufferSize,
-		DefaultLogger{Prefix: "test"},
+		StandardLogger{Prefix: "test"},
 	)
 }
 
@@ -120,9 +120,9 @@ func TestResponseWriterFormat(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			rw := newResponseWriter(
+			rw := newResponse(
 				server, test.msgn, 4096,
-				DefaultLogger{Prefix: "test"},
+				StandardLogger{Prefix: "test"},
 			)
 
 			f, err := ioutil.TempFile(tempFileDir, tempFilePrefix)
@@ -229,9 +229,9 @@ func TestResponseWriterBuffering(t *testing.T) {
 			defer os.Remove(f.Name())
 			defer f.Close()
 
-			rw := newResponseWriter(
+			rw := newResponse(
 				server, test.msgn, test.oobn,
-				DefaultLogger{Prefix: "test"},
+				StandardLogger{Prefix: "test"},
 			)
 			for i := 0; i < test.fdn; i++ {
 				err = rw.Write(

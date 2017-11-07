@@ -212,7 +212,7 @@ func (s *Server) SendFileTo(conn net.Conn, file *os.File, meta io.WriterTo) erro
 	return SendFile(rw, file, meta)
 }
 
-func (s *Server) newResponseWriter(conn net.Conn) (*responseWriter, error) {
+func (s *Server) newResponseWriter(conn net.Conn) (*response, error) {
 	c, ok := conn.(*net.UnixConn)
 	if !ok {
 		return nil, ErrNotUnixConn
@@ -221,7 +221,7 @@ func (s *Server) newResponseWriter(conn net.Conn) (*responseWriter, error) {
 		msgn = nonZero(s.MsgBufferSize, msgDefaultBufferSize)
 		oobn = nonZero(s.OOBBufferSize, oobDefaultBufferSize)
 	)
-	return newResponseWriter(
+	return newResponse(
 		c, msgn, oobn,
 		serverLogger{s},
 	), nil
@@ -245,8 +245,8 @@ func (s *Server) errorf(f string, args ...interface{}) {
 	}
 }
 
-// responseWriter is an unexported ResponseWriter implementation.
-type responseWriter struct {
+// response is an unexported ResponseWriter implementation.
+type response struct {
 	Logger
 	conn *net.UnixConn
 
@@ -257,10 +257,10 @@ type responseWriter struct {
 	err error
 }
 
-// newResponseWriter returns ResponseWriter instance that writes descriptors to
-// the given conn.
-func newResponseWriter(conn *net.UnixConn, msgn, oobn int, log Logger) *responseWriter {
-	r := &responseWriter{
+// newResponse returns ResponseWriter instance that writes descriptors to the
+// given conn.
+func newResponse(conn *net.UnixConn, msgn, oobn int, log Logger) *response {
+	r := &response{
 		Logger: log,
 		conn:   conn,
 
@@ -274,29 +274,29 @@ const msgHeaderSize = 4
 
 var zeroHeader = []byte{0, 0, 0, 0}
 
-func (rw *responseWriter) Write(fd int, meta io.WriterTo) (ret error) {
-	if rw.err != nil {
-		return rw.err
+func (r *response) Write(fd int, meta io.WriterTo) (ret error) {
+	if r.err != nil {
+		return r.err
 	}
 	var (
 		metaBytes []byte
 		mustCopy  bool
 	)
 	for {
-		if len(rw.fds) == cap(rw.fds) {
+		if len(r.fds) == cap(r.fds) {
 			// No space for a new descriptor.
 			goto flush
 		}
-		if len(rw.buf)-rw.n < msgHeaderSize {
+		if len(r.buf)-r.n < msgHeaderSize {
 			// No space even for an empty meta.
 			goto flush
 		}
 		if meta == nil {
-			rw.n += copy(rw.buf[rw.n:], zeroHeader)
+			r.n += copy(r.buf[r.n:], zeroHeader)
 		} else {
 			if metaBytes == nil {
 				// Skip msgHeaderSize bytes and get the slice.
-				p := rw.buf[rw.n+msgHeaderSize:]
+				p := r.buf[r.n+msgHeaderSize:]
 				// Create bytes.Buffer with slice backed by rw.buf
 				// hoping that no reallocation will be made.
 				buf := bytes.NewBuffer(p[:0])
@@ -304,7 +304,7 @@ func (rw *responseWriter) Write(fd int, meta io.WriterTo) (ret error) {
 					W: buf,
 					// Anyway, we can handle only len(rw.buf) bytes even after
 					// flushing.
-					N: len(rw.buf) - msgHeaderSize,
+					N: len(r.buf) - msgHeaderSize,
 				}
 				n, err := meta.WriteTo(limbuf)
 				if limbuf.E {
@@ -328,16 +328,16 @@ func (rw *responseWriter) Write(fd int, meta io.WriterTo) (ret error) {
 				}
 			}
 			// Buffer header bytes.
-			binary.LittleEndian.PutUint32(rw.buf[rw.n:], uint32(len(metaBytes)))
-			rw.n += msgHeaderSize
+			binary.LittleEndian.PutUint32(r.buf[r.n:], uint32(len(metaBytes)))
+			r.n += msgHeaderSize
 			// Buffer meta bytes.
 			if mustCopy {
-				rw.n += copy(rw.buf[rw.n:], metaBytes)
+				r.n += copy(r.buf[r.n:], metaBytes)
 			} else {
-				rw.n += len(metaBytes)
+				r.n += len(metaBytes)
 			}
 		}
-		rw.fds = append(rw.fds, fd)
+		r.fds = append(r.fds, fd)
 		return nil
 
 	flush:
@@ -346,30 +346,30 @@ func (rw *responseWriter) Write(fd int, meta io.WriterTo) (ret error) {
 			return ret
 		}
 		ret = ErrLongWrite
-		if err := rw.Flush(); err != nil {
+		if err := r.Flush(); err != nil {
 			return err
 		}
 	}
 }
 
-func (rw *responseWriter) Flush() error {
-	if rw.err != nil {
-		return rw.err
+func (r *response) Flush() error {
+	if r.err != nil {
+		return r.err
 	}
-	if len(rw.fds) == 0 {
+	if len(r.fds) == 0 {
 		return nil
 	}
 	var (
-		msgBytes = rw.buf[:rw.n]
-		oobBytes = syscall.UnixRights(rw.fds...)
+		msgBytes = r.buf[:r.n]
+		oobBytes = syscall.UnixRights(r.fds...)
 	)
-	msgn, oobn, err := rw.conn.WriteMsgUnix(msgBytes, oobBytes, nil)
+	msgn, oobn, err := r.conn.WriteMsgUnix(msgBytes, oobBytes, nil)
 	if err == nil && (msgn < len(msgBytes) || oobn < len(oobBytes)) {
 		err = io.ErrShortWrite
 	}
-	rw.err = err
-	rw.n = 0
-	rw.fds = rw.fds[:0]
+	r.err = err
+	r.n = 0
+	r.fds = r.fds[:0]
 	return err
 }
 

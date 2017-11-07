@@ -31,9 +31,9 @@ type Logger interface {
 	ErrorLogger
 }
 
-// DefaultLogger implements all *Logger interfaces. It formats and prints given
-// message via standard `log` pacakge.
-type DefaultLogger struct {
+// StandardLogger implements all *Logger interfaces. It formats and prints
+// given message via standard `log` pacakge.
+type StandardLogger struct {
 	Prefix      string
 	IgnoreDebug bool
 	IgnoreInfo  bool
@@ -42,25 +42,25 @@ type DefaultLogger struct {
 
 // Debugf formats and prints debug message via standard `log` package.
 // If d.IgnoreDebug is true then it does nothing.
-func (d DefaultLogger) Debugf(f string, args ...interface{}) {
-	if !d.IgnoreDebug {
-		log.Print(d.Prefix, "[DEBUG] ", fmt.Sprintf(f, args...))
+func (s StandardLogger) Debugf(f string, args ...interface{}) {
+	if !s.IgnoreDebug {
+		log.Print(s.Prefix, "[DEBUG] ", fmt.Sprintf(f, args...))
 	}
 }
 
 // Infof formats and prints info message via standard `log` package.
 // If d.IgnoreInfo is true then it does nothing.
-func (d DefaultLogger) Infof(f string, args ...interface{}) {
-	if !d.IgnoreInfo {
-		log.Print(d.Prefix, "[INFO] ", fmt.Sprintf(f, args...))
+func (s StandardLogger) Infof(f string, args ...interface{}) {
+	if !s.IgnoreInfo {
+		log.Print(s.Prefix, "[INFO] ", fmt.Sprintf(f, args...))
 	}
 }
 
 // Errorf formats and prints error message via standard `log` package.
 // If d.IgnoreError is true then it does nothing.
-func (d DefaultLogger) Errorf(f string, args ...interface{}) {
-	if d.IgnoreError {
-		log.Print(d.Prefix, "[ERROR] ", fmt.Sprintf(f, args...))
+func (s StandardLogger) Errorf(f string, args ...interface{}) {
+	if s.IgnoreError {
+		log.Print(s.Prefix, "[ERROR] ", fmt.Sprintf(f, args...))
 	}
 }
 
