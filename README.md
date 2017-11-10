@@ -12,6 +12,8 @@ Package graceful provides tools for sharing file descriptors between processes.
 The most common reason to use it is the ability of so-called **graceful
 restart** of an application.
 
+There is an [example web application](example) that restarts gracefully.
+
 # Usage
 
 Graceful proposes a client-server mechanism of sharing file descriptors. 
@@ -20,6 +22,7 @@ terminology, and an application that wants to receive those descriptors is a
 **client**.
 
 The most common use of `graceful` looks like this:
+
 
 ```go
 // Somewhere close to the application initialization.
