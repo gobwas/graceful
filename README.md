@@ -29,7 +29,7 @@ var (
 	ln   net.Listener
 	file *os.File
 )
-err := graceful.Receive("/var/run/app.sock", func(fd int, r io.Reader) {
+err := graceful.Receive("/var/run/app.sock", func(fd int, meta io.Reader) {
 	// Handle received descriptor with concrete application logic.
 	// 
 	// meta is an additional information that corresponds to the descriptor and
@@ -42,11 +42,11 @@ err := graceful.Receive("/var/run/app.sock", func(fd int, r io.Reader) {
 	}
 	// There is a helper type called graceful.Meta that could be used to send
 	// key-value pairs of meta without additional lines of code. Lets use it.
-	meta := new(graceful.Meta)
-	if _, err := meta.ReadFrom(meta); err != nil {
+	m := new(graceful.Meta)
+	if _, err := m.ReadFrom(meta); err != nil {
 		// Handle error.
 	}
-	file = os.NewFile(fd, meta["name"])
+	file = os.NewFile(fd, m["name"])
 })
 if err != nil {
 	// Handle error.
