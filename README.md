@@ -3,13 +3,14 @@
 [![GoDoc][godoc-image]][godoc-url]
 [![Travis][travis-image]][travis-url]
 
-> Go tools for graceful restarts.
+> A library for sharing descriptors in Go.
 
 # Overview
 
 Package graceful provides tools for sharing file descriptors between processes.
 
-The most common reason to use it is the ability of graceful restart of an application.
+The most common reason to use it is the ability of so-called **graceful
+restart** of an application.
 
 # Usage
 
