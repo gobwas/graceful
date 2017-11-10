@@ -109,7 +109,7 @@ graceful.SendListenerTo(conn, file, graceful.Meta{
 // bytes.Buffer instance implements io.WriterTo, so wa are free to use it as
 // meta argument for graceful.Send*() calls.
 buf := new(bytes.Buffer)
-buf.Write("hello, I am meta")
+buf.Write("Hello, I am meta!")
 
 // Now send some descriptor with custom meta bytes.
 // Client will receive io.Reader instance as meta that contains our simple
