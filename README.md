@@ -57,8 +57,8 @@ if err != nil {
 
 // Somewhere close to the application termination.
 //
-// By some logic we've decided to send our descriptors to new application
-// instance that probably just started.
+// By some logic we've decided to send our descriptors to a new application
+// instance that is probably was just started.
 //
 // This code will send `ln` and `file` descriptors to every accepted
 // connection on unix domain socket "/var/run/app.sock".
