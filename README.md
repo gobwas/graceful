@@ -83,6 +83,7 @@ ln, err := net.Listen("unix", "/var/run/app.sock")
 if err != nil {
 	// Handle error.
 }
+defer ln.Close()
 
 // Accept client connection from another application instance.
 conn, err := ln.Accept()
@@ -102,6 +103,18 @@ graceful.SendListenerTo(conn, ln, nil)
 graceful.SendListenerTo(conn, file, graceful.Meta{
 	"name": file.Name(),
 })
+
+// Alternatively, you could send custom meta information with the fd.
+//
+// bytes.Buffer instance implements io.WriterTo, so wa are free to use it as
+// meta argument for graceful.Send*() calls.
+buf := new(bytes.Buffer)
+buf.Write("hello, I am meta")
+
+// Now send some descriptor with custom meta bytes.
+// Client will receive io.Reader instance as meta that contains our simple
+// string.
+graceful.SendTo(conn, someFD, buf)
 ```
 
 There is an [example web application](example) that handles restarts
