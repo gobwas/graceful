@@ -7,8 +7,7 @@
 
 # Overview
 
-Package graceful provides tools for sharing file descriptors between the
-processes.
+Package graceful provides tools for sharing file descriptors between processes.
 
 The most common reason to use it is the ability of graceful restart of an application.
 
@@ -22,27 +21,44 @@ terminology, and an application that wants to receive those descriptors is a
 The most common use of `graceful` looks like this:
 
 ```go
-// Somewhere close to the application init.
-err := graceful.Receive("/var/run/app.sock", func(fd int, meta io.Reader) {
-	// Handle received descriptor depending on application logic.
+// Somewhere close to the application initialization.
+//
+// By some logic we've decided to receive descriptors from currently running
+// instance of the application.
+var (
+	ln   net.Listener
+	file *os.File
+)
+err := graceful.Receive("/var/run/app.sock", func(fd int, r io.Reader) {
+	// Handle received descriptor with concrete application logic.
 	// 
 	// meta is an additional information that corresponds to the descriptor and
 	// represented by an io.Reader. User is free to select strategy of
 	// marshaling/unmarshaling this information.
-	//	
-	// There is a helper type called graceful.Meta that could be used to send
-	// key-value pairs of meta without additional lines of code.
 	if meta == nil {
+		// In our example listener is passed with empty meta.
 		ln = graceful.FdListener(fd)
 		return
 	}
-	m, err := graceful.MetaFrom(meta)
-	if err == nil {
-		file = os.NewFile(fd, m["name"])
+	// There is a helper type called graceful.Meta that could be used to send
+	// key-value pairs of meta without additional lines of code. Lets use it.
+	meta := new(graceful.Meta)
+	if _, err := meta.ReadFrom(meta); err != nil {
+		// Handle error.
 	}
+	file = os.NewFile(fd, meta["name"])
 })
+if err != nil {
+	// Handle error.
+}
 
-// Somewhere in the application.
+...
+
+// Somewhere close to the application termination.
+//
+// By some logic we've decided to send our descriptors to new application
+// instance that probably just started.
+//
 // This code will send `ln` and `file` descriptors to every accepted
 // connection on unix domain socket "/var/run/app.sock".
 go graceful.ListenAndServe("/var/run/app.sock", graceful.SequenceHandler(
@@ -61,22 +77,30 @@ If you have a more difficult logic of restarts, you could use less general API
 of `graceful`:
 
 ```go
-
 // Listen for an upcoming instance at the socket.
 ln, err := net.Listen("unix", "/var/run/app.sock")
 if err != nil {
-	// handle error
+	// Handle error.
 }
-app, err := ln.Accept()
+
+// Accept client connection from another application instance.
+conn, err := ln.Accept()
 if err != nil {
-	// handle error
+	// Handle error.
 }
-// Send some application specific data first.
-if _, err := app.Write(data); err != nil {
-	// handle error
+defer conn.Close()
+
+// Send some application specific data first. This is useful when data is much
+// larger than graceful i/o buffers and won't be putted in the descriptor meta.
+if _, err := conn.Write(data); err != nil {
+	// Handle error.
 }
+
 // Then send some descriptors to the connection.
-graceful.SendListenerTo(app, ln, nil)
+graceful.SendListenerTo(conn, ln, nil)
+graceful.SendListenerTo(conn, file, graceful.Meta{
+	"name": file.Name(),
+})
 ```
 
 There is an [example web application](example) that handles restarts
